@@ -7,12 +7,14 @@ use chirpstack_api::tonic::{self, Request, Response, Status};
 use chirpstack_api::{api, common};
 use chrono::{DateTime, Duration, Local, Utc};
 use lrwn::EUI64;
+use tracing::warn;
 use uuid::Uuid;
 
 use super::auth::validator;
 use super::error::ToStatus;
 use super::helpers::{self, FromProto};
 use crate::certificate;
+use crate::gateway_presence;
 use crate::storage::{
     fields,
     gateway::{self, RelayId},
@@ -92,6 +94,18 @@ impl GatewayService for Gateway {
             .await?;
 
         let gw = gateway::get(&gw_id).await.map_err(|e| e.status())?;
+        let redis_last_seen_at = match gateway_presence::get_last_seen(gw_id).await {
+            Ok(v) => v,
+            Err(e) => {
+                warn!(
+                    gateway_id = %gw_id,
+                    error = %e,
+                    "Redis gateway last_seen lookup failed"
+                );
+                None
+            }
+        };
+        let effective_last_seen_at = redis_last_seen_at.or(gw.last_seen_at.as_ref().cloned());
 
         let mut resp = Response::new(api::GetGatewayResponse {
             gateway: Some(api::Gateway {
@@ -111,8 +125,7 @@ impl GatewayService for Gateway {
             }),
             created_at: Some(helpers::datetime_to_prost_timestamp(&gw.created_at)),
             updated_at: Some(helpers::datetime_to_prost_timestamp(&gw.updated_at)),
-            last_seen_at: gw
-                .last_seen_at
+            last_seen_at: effective_last_seen_at
                 .as_ref()
                 .map(helpers::datetime_to_prost_timestamp),
         });
@@ -246,6 +259,21 @@ impl GatewayService for Gateway {
         )
         .await
         .map_err(|e| e.status())?;
+        let gateway_ids: Vec<EUI64> = result.iter().map(|gw| gw.gateway_id).collect();
+        let redis_last_seen_at = match gateway_presence::get_last_seen_many(&gateway_ids).await {
+            Ok(v) => v,
+            Err(e) => {
+                warn!(error = %e, "Redis gateway last_seen bulk lookup failed");
+                std::collections::HashMap::new()
+            }
+        };
+        let redis_state = match gateway_presence::get_state_many(&gateway_ids).await {
+            Ok(v) => v,
+            Err(e) => {
+                warn!(error = %e, "Redis gateway state bulk lookup failed");
+                std::collections::HashMap::new()
+            }
+        };
 
         let mut resp = Response::new(api::ListGatewaysResponse {
             total_count: count as u32,
@@ -265,13 +293,24 @@ impl GatewayService for Gateway {
                     properties: gw.properties.into_hashmap(),
                     created_at: Some(helpers::datetime_to_prost_timestamp(&gw.created_at)),
                     updated_at: Some(helpers::datetime_to_prost_timestamp(&gw.updated_at)),
-                    last_seen_at: gw
-                        .last_seen_at
-                        .as_ref()
+                    last_seen_at: redis_last_seen_at
+                        .get(&gw.gateway_id.to_string())
+                        .or(gw.last_seen_at.as_ref())
                         .map(helpers::datetime_to_prost_timestamp),
                     state: {
-                        if let Some(ts) = gw.last_seen_at {
-                            if (Utc::now() - ts)
+                        if let Some(v) = redis_state.get(&gw.gateway_id.to_string()) {
+                            if v == "online" {
+                                api::GatewayState::Online
+                            } else if v == "offline" {
+                                api::GatewayState::Offline
+                            } else {
+                                api::GatewayState::NeverSeen
+                            }
+                        } else if let Some(ts) = redis_last_seen_at
+                            .get(&gw.gateway_id.to_string())
+                            .or(gw.last_seen_at.as_ref())
+                        {
+                            if (Utc::now() - *ts)
                                 > Duration::try_seconds((gw.stats_interval_secs * 2).into())
                                     .unwrap_or_default()
                             {

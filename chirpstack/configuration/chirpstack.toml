@@ -91,8 +91,18 @@
 
   # Minimum interval between last_seen_at updates in the database.
   device_last_seen_update_interval = "10m"
+  gateway_last_seen_update_interval = "10m"
 
   [network.device_presence]
+  enabled = true
+  shards = 64
+  batch_size = 512
+  check_interval = "5s"
+  offline_threshold = "2m"
+  grace_period = "0s"
+  state_ttl = "24h"
+
+  [network.gateway_presence]
   enabled = true
   shards = 64
   batch_size = 512

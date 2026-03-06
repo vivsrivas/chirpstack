@@ -171,9 +171,12 @@ pub struct Network {
     pub get_downlink_data_delay: Duration,
     #[serde(with = "humantime_serde")]
     pub device_last_seen_update_interval: Duration,
+    #[serde(with = "humantime_serde")]
+    pub gateway_last_seen_update_interval: Duration,
     pub mac_commands_disabled: bool,
     pub adr_plugins: Vec<String>,
     pub device_presence: DevicePresence,
+    pub gateway_presence: GatewayPresence,
     pub scheduler: Scheduler,
 }
 
@@ -188,9 +191,11 @@ impl Default for Network {
             deduplication_delay: Duration::from_millis(200),
             get_downlink_data_delay: Duration::from_millis(100),
             device_last_seen_update_interval: Duration::from_secs(5 * 60),
+            gateway_last_seen_update_interval: Duration::from_secs(5 * 60),
             mac_commands_disabled: false,
             adr_plugins: vec![],
             device_presence: Default::default(),
+            gateway_presence: Default::default(),
             scheduler: Default::default(),
         }
     }
@@ -215,6 +220,36 @@ pub struct DevicePresence {
 impl Default for DevicePresence {
     fn default() -> Self {
         DevicePresence {
+            enabled: false,
+            shards: 64,
+            batch_size: 512,
+            check_interval: Duration::from_secs(1),
+            offline_threshold: Duration::from_secs(180),
+            grace_period: Duration::from_secs(60),
+            state_ttl: Duration::from_secs(60 * 60 * 24),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(default)]
+pub struct GatewayPresence {
+    pub enabled: bool,
+    pub shards: u32,
+    pub batch_size: usize,
+    #[serde(with = "humantime_serde")]
+    pub check_interval: Duration,
+    #[serde(with = "humantime_serde")]
+    pub offline_threshold: Duration,
+    #[serde(with = "humantime_serde")]
+    pub grace_period: Duration,
+    #[serde(with = "humantime_serde")]
+    pub state_ttl: Duration,
+}
+
+impl Default for GatewayPresence {
+    fn default() -> Self {
+        GatewayPresence {
             enabled: false,
             shards: 64,
             batch_size: 512,
@@ -265,9 +300,13 @@ pub struct Monitoring {
     pub gateway_frame_log_max_history: usize,
     pub device_frame_log_max_history: usize,
     pub device_event_log_max_history: usize,
+    pub gateway_event_log_max_history: usize,
     pub per_gateway_frame_log_max_history: usize,
     #[serde(with = "humantime_serde")]
     pub per_gateway_frame_log_ttl: Duration,
+    pub per_gateway_event_log_max_history: usize,
+    #[serde(with = "humantime_serde")]
+    pub per_gateway_event_log_ttl: Duration,
     pub per_device_frame_log_max_history: usize,
     #[serde(with = "humantime_serde")]
     pub per_device_frame_log_ttl: Duration,
@@ -286,10 +325,13 @@ impl Default for Monitoring {
             gateway_frame_log_max_history: 10,
             device_frame_log_max_history: 10,
             device_event_log_max_history: 10,
+            gateway_event_log_max_history: 10,
             per_gateway_frame_log_max_history: 10,
+            per_gateway_event_log_max_history: 10,
             per_device_frame_log_max_history: 10,
             per_device_event_log_max_history: 10,
             per_gateway_frame_log_ttl: Duration::from_secs(60 * 60 * 24 * 31), // 31 days
+            per_gateway_event_log_ttl: Duration::from_secs(60 * 60 * 24 * 31),
             per_device_frame_log_ttl: Duration::from_secs(60 * 60 * 24 * 31),
             per_device_event_log_ttl: Duration::from_secs(60 * 60 * 24 * 31),
         }

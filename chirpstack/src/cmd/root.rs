@@ -5,7 +5,10 @@ use signal_hook_tokio::Signals;
 use tracing::{info, warn};
 
 use crate::gateway;
-use crate::{adr, api, applayer::fuota, backend, downlink, integration, presence, region, storage};
+use crate::{
+    adr, api, applayer::fuota, backend, downlink, gateway_presence, integration, presence, region,
+    storage,
+};
 
 pub async fn run() -> Result<()> {
     info!(
@@ -22,6 +25,7 @@ pub async fn run() -> Result<()> {
     gateway::backend::setup().await?;
     downlink::setup().await;
     presence::setup().await;
+    gateway_presence::setup().await;
     fuota::setup().await;
     api::setup().await?;
 

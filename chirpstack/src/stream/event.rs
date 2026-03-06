@@ -55,6 +55,47 @@ pub async fn log_event_for_device(typ: &str, dev_eui: &str, b: &[u8]) -> Result<
     Ok(())
 }
 
+pub async fn log_event_for_gateway(typ: &str, gateway_id: &str, b: &[u8]) -> Result<()> {
+    let conf = config::get();
+
+    // per gateway stream
+    if conf.monitoring.per_gateway_event_log_max_history > 0 {
+        let key = redis_key(format!("gw:{{{}}}:stream:event", gateway_id));
+        () = redis::pipe()
+            .atomic()
+            .cmd("XADD")
+            .arg(&key)
+            .arg("MAXLEN")
+            .arg(conf.monitoring.per_gateway_event_log_max_history)
+            .arg("*")
+            .arg(typ)
+            .arg(b)
+            .ignore()
+            .cmd("PEXPIRE")
+            .arg(&key)
+            .arg(conf.monitoring.per_gateway_event_log_ttl.as_millis() as usize)
+            .ignore()
+            .query_async(&mut get_async_redis_conn().await?)
+            .await?;
+    }
+
+    // global gateway stream
+    if conf.monitoring.gateway_event_log_max_history > 0 {
+        let key = redis_key("gw:stream:event".to_string());
+        () = redis::cmd("XADD")
+            .arg(&key)
+            .arg("MAXLEN")
+            .arg(conf.monitoring.gateway_event_log_max_history)
+            .arg("*")
+            .arg(typ)
+            .arg(b)
+            .query_async(&mut get_async_redis_conn().await?)
+            .await?;
+    }
+
+    Ok(())
+}
+
 pub async fn get_event_logs(
     key: String,
     count: usize,

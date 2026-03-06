@@ -254,6 +254,14 @@ pub fn run() {
   # Set to 0s to update last_seen_at on every uplink.
   device_last_seen_update_interval="{{ network.device_last_seen_update_interval }}"
 
+  # Gateway last_seen update interval.
+  #
+  # This defines the minimum interval between updates of the gateway
+  # last_seen_at field and metadata fields in the database.
+  #
+  # Set to 0s to update on every stats uplink.
+  gateway_last_seen_update_interval="{{ network.gateway_last_seen_update_interval }}"
+
   # Mac-commands disabled.
   mac_commands_disabled={{ network.mac_commands_disabled }}
 
@@ -291,6 +299,30 @@ pub fn run() {
 
     # Presence state TTL.
     state_ttl="{{ network.device_presence.state_ttl }}"
+
+  # Gateway presence tracking.
+  [network.gateway_presence]
+
+    # Enable Redis based gateway presence tracking and offline/online events.
+    enabled={{ network.gateway_presence.enabled }}
+
+    # Number of expiry shards.
+    shards={{ network.gateway_presence.shards }}
+
+    # Number of due gateways claimed per shard iteration.
+    batch_size={{ network.gateway_presence.batch_size }}
+
+    # Offline detector loop interval.
+    check_interval="{{ network.gateway_presence.check_interval }}"
+
+    # Gateway offline threshold.
+    offline_threshold="{{ network.gateway_presence.offline_threshold }}"
+
+    # Additional grace period for last_seen key expiry.
+    grace_period="{{ network.gateway_presence.grace_period }}"
+
+    # Presence state TTL.
+    state_ttl="{{ network.gateway_presence.state_ttl }}"
 
 
   # Scheduler settings.
@@ -376,6 +408,13 @@ pub fn run() {
   # Setting this value to 0 disables this feature.
   device_event_log_max_history={{ monitoring.device_event_log_max_history }}
 
+  # Gateway event-log max history.
+  #
+  # This defines the max number of event-log records that will be persisted in Redis Streams.
+  # This stream contains the events of all gateways.
+  # Setting this value to 0 disables this feature.
+  gateway_event_log_max_history={{ monitoring.gateway_event_log_max_history }}
+
   # Per gateway frame-log max history.
   #
   # Equal to the gateway_frame_log_max_history, but for each gateway a new Redis Stream
@@ -387,6 +426,18 @@ pub fn run() {
   #
   # This defines the TTL of the Redis Stream key.
   per_gateway_frame_log_ttl="{{ monitoring.per_gateway_frame_log_ttl }}"
+
+  # Per gateway event-log max history.
+  #
+  # Equal to the gateway_event_log_max_history, but for each gateway a new Redis Stream
+  # is created.
+  # Setting this value to 0 disables this feature.
+  per_gateway_event_log_max_history={{ monitoring.per_gateway_event_log_max_history }}
+
+  # Per gateway event-log TTL.
+  #
+  # This defines the TTL of the Redis Stream key.
+  per_gateway_event_log_ttl="{{ monitoring.per_gateway_event_log_ttl }}"
 
   # Per device frame-log max history.
   #

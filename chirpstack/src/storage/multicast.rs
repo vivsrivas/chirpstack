@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Duration, Utc};
 use diesel::{dsl, prelude::*};
 use diesel_async::RunQueryDsl;
+use std::collections::HashSet;
 use tracing::info;
 use uuid::Uuid;
 
@@ -15,6 +16,7 @@ use super::schema::{
 };
 use super::{db_transaction, fields, get_async_db_conn};
 use crate::downlink::classb;
+use crate::gateway_presence;
 use crate::{config, gpstime::ToDateTime, gpstime::ToGpsTime};
 
 #[derive(Clone, Queryable, Insertable, Debug, PartialEq, Eq)]
@@ -652,66 +654,118 @@ pub async fn get_queue(multicast_group_id: &Uuid) -> Result<Vec<MulticastGroupQu
 
 pub async fn get_schedulable_queue_items(limit: usize) -> Result<Vec<MulticastGroupQueueItem>> {
     let mut c = get_async_db_conn().await?;
-    db_transaction::<Vec<MulticastGroupQueueItem>, Error, _>(&mut c, |c| {
-            Box::pin(async move {
-                let conf = config::get();
-                diesel::sql_query(if cfg!(feature = "sqlite") {
-                    r#"
-                        update
-                            multicast_group_queue_item
-                        set
-                            scheduler_run_after = ?3
-                        where
-                            id in (
-                                select
-                                    id
-                                from
-                                    multicast_group_queue_item
-                                where
-                                    scheduler_run_after <= ?2
-                                order by
-                                    created_at
-                                limit ?1
-                            )
-                        returning *
-                    "#
-                } else {
-                    r#"
-                        update
-                            multicast_group_queue_item
-                        set
-                            scheduler_run_after = $3
-                        where
-                            id in (
-                                select
-                                    qi.id
-                                from
-                                    multicast_group_queue_item qi
-                                inner join gateway g
-                                    on g.gateway_id = qi.gateway_id
-                                where
-                                    qi.scheduler_run_after <= $2
-                                    -- check that the gateway is online, except when the item already has expired
-                                    and ($2 - make_interval(secs => g.stats_interval_secs * 2) <= g.last_seen_at or expires_at <= $2)
-                                order by
-                                    qi.created_at
-                                limit $1
-                            )
-                        returning *
-                    "#
-                })
-                .bind::<diesel::sql_types::Integer, _>(limit as i32)
-                .bind::<fields::sql_types::Timestamptz, _>(Utc::now())
-                .bind::<fields::sql_types::Timestamptz, _>(
-                    Utc::now() + Duration::from_std(2 * conf.network.scheduler.interval).unwrap(),
-                )
-                .load(c)
-                .await
-                .map_err(|e| Error::from_diesel(e, "".into()))
+    let conf = config::get();
+    let use_gateway_presence = conf.network.gateway_presence.enabled;
+
+    let mut items = db_transaction::<Vec<MulticastGroupQueueItem>, Error, _>(&mut c, |c| {
+        Box::pin(async move {
+            diesel::sql_query(if cfg!(feature = "sqlite") {
+                r#"
+                    update
+                        multicast_group_queue_item
+                    set
+                        scheduler_run_after = ?3
+                    where
+                        id in (
+                            select
+                                id
+                            from
+                                multicast_group_queue_item
+                            where
+                                scheduler_run_after <= ?2
+                            order by
+                                created_at
+                            limit ?1
+                        )
+                    returning *
+                "#
+            } else if use_gateway_presence {
+                r#"
+                    update
+                        multicast_group_queue_item
+                    set
+                        scheduler_run_after = $3
+                    where
+                        id in (
+                            select
+                                qi.id
+                            from
+                                multicast_group_queue_item qi
+                            where
+                                qi.scheduler_run_after <= $2
+                            order by
+                                qi.created_at
+                            limit $1
+                        )
+                    returning *
+                "#
+            } else {
+                r#"
+                    update
+                        multicast_group_queue_item
+                    set
+                        scheduler_run_after = $3
+                    where
+                        id in (
+                            select
+                                qi.id
+                            from
+                                multicast_group_queue_item qi
+                            inner join gateway g
+                                on g.gateway_id = qi.gateway_id
+                            where
+                                qi.scheduler_run_after <= $2
+                                -- check that the gateway is online, except when the item already has expired
+                                and ($2 - make_interval(secs => g.stats_interval_secs * 2) <= g.last_seen_at or expires_at <= $2)
+                            order by
+                                qi.created_at
+                            limit $1
+                        )
+                    returning *
+                "#
             })
+            .bind::<diesel::sql_types::Integer, _>(limit as i32)
+            .bind::<fields::sql_types::Timestamptz, _>(Utc::now())
+            .bind::<fields::sql_types::Timestamptz, _>(
+                Utc::now() + Duration::from_std(2 * conf.network.scheduler.interval).unwrap(),
+            )
+            .load(c)
+            .await
+            .map_err(|e| Error::from_diesel(e, "".into()))
         })
-        .await
-        .context("Get schedulable multicast-group queue items")
+    })
+    .await
+    .context("Get schedulable multicast-group queue items")?;
+
+    if use_gateway_presence {
+        let now = Utc::now();
+        let gateway_ids: Vec<EUI64> = items
+            .iter()
+            .map(|qi| qi.gateway_id)
+            .collect::<HashSet<EUI64>>()
+            .into_iter()
+            .collect();
+
+        let states = gateway_presence::get_state_many(&gateway_ids)
+            .await
+            .context("Get gateway presence states for multicast scheduling")
+            .map_err(Error::Anyhow)?;
+
+        items.retain(|qi| {
+            if let Some(expires_at) = qi.expires_at
+                && expires_at <= now
+            {
+                return true;
+            }
+
+            matches!(
+                states.get(&qi.gateway_id.to_string()).map(String::as_str),
+                Some("online")
+            )
+        });
+    }
+
+    Ok(items)
 }
 
 #[cfg(test)]

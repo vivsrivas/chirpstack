@@ -28,6 +28,7 @@ mod config;
 mod devaddr;
 mod downlink;
 mod gateway;
+mod gateway_presence;
 mod gpstime;
 mod helpers;
 mod integration;

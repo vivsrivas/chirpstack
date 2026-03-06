@@ -9,6 +9,7 @@ use chrono::{DateTime, Local, Utc};
 use tracing::{Instrument, Level, error, info, span, trace, warn};
 
 use crate::gateway::backend as gateway_backend;
+use crate::gateway_presence;
 use crate::helpers::errors::PrintFullError;
 use crate::storage::{error::Error, fields, gateway, metrics};
 use crate::{config, region};
@@ -73,26 +74,63 @@ impl Stats {
     async fn update_gateway_state(&mut self) -> Result<()> {
         trace!("Update gateway state");
 
-        let mut gw_cs = gateway::GatewayChangeset {
-            last_seen_at: Some(Some(Utc::now())),
-            properties: Some(fields::KeyValue::new(self.stats.metadata.clone())),
-            ..Default::default()
-        };
+        let persist_interval = config::get().network.gateway_last_seen_update_interval;
+        let should_persist_db =
+            match gateway_presence::should_update_db_state(self.gateway_id, persist_interval).await
+            {
+                Ok(v) => v,
+                Err(e) => {
+                    warn!(
+                        gateway_id = %self.gateway_id,
+                        error = %e.full(),
+                        "Gateway DB-state throttle check failed, falling back to DB update"
+                    );
+                    true
+                }
+            };
 
-        if let Some(loc) = &self.stats.location {
-            // Sanity check to make sure there is a location.
-            if !(loc.latitude == 0.0 && loc.longitude == 0.0 && loc.altitude == 0.0) {
-                gw_cs.latitude = Some(loc.latitude);
-                gw_cs.longitude = Some(loc.longitude);
-                gw_cs.altitude = Some(loc.altitude as f32);
+        if should_persist_db {
+            let mut gw_cs = gateway::GatewayChangeset {
+                last_seen_at: Some(Some(Utc::now())),
+                properties: Some(fields::KeyValue::new(self.stats.metadata.clone())),
+                ..Default::default()
+            };
+
+            if let Some(loc) = &self.stats.location {
+                // Sanity check to make sure there is a location.
+                if !(loc.latitude == 0.0 && loc.longitude == 0.0 && loc.altitude == 0.0) {
+                    gw_cs.latitude = Some(loc.latitude);
+                    gw_cs.longitude = Some(loc.longitude);
+                    gw_cs.altitude = Some(loc.altitude as f32);
+                }
             }
-        }
 
-        self.gateway = Some(
-            gateway::partial_update(self.gateway_id, &gw_cs)
-                .await
-                .context("Update gateway state")?,
-        );
+            self.gateway = Some(
+                gateway::partial_update(self.gateway_id, &gw_cs)
+                    .await
+                    .context("Update gateway state")?,
+            );
+        } else {
+            self.gateway = Some(
+                gateway::get(&self.gateway_id)
+                    .await
+                    .context("Get gateway for non-persisted state update")?,
+            );
+        }
+        let offline_threshold_secs =
+            (self.gateway.as_ref().unwrap().stats_interval_secs.max(1) as u64) * 2;
+        if let Err(e) = gateway_presence::heartbeat(
+            self.gateway_id,
+            std::time::Duration::from_secs(offline_threshold_secs),
+        )
+        .await
+        {
+            warn!(
+                gateway_id = %self.gateway_id,
+                error = %e.full(),
+                "Update gateway presence error"
+            );
+        }
 
         Ok(())
     }
