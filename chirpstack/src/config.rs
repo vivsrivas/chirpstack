@@ -169,8 +169,11 @@ pub struct Network {
     pub deduplication_delay: Duration,
     #[serde(with = "humantime_serde")]
     pub get_downlink_data_delay: Duration,
+    #[serde(with = "humantime_serde")]
+    pub device_last_seen_update_interval: Duration,
     pub mac_commands_disabled: bool,
     pub adr_plugins: Vec<String>,
+    pub device_presence: DevicePresence,
     pub scheduler: Scheduler,
 }
 
@@ -184,9 +187,41 @@ impl Default for Network {
             device_session_ttl: Duration::from_secs(60 * 60 * 24 * 31),
             deduplication_delay: Duration::from_millis(200),
             get_downlink_data_delay: Duration::from_millis(100),
+            device_last_seen_update_interval: Duration::from_secs(5 * 60),
             mac_commands_disabled: false,
             adr_plugins: vec![],
+            device_presence: Default::default(),
             scheduler: Default::default(),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(default)]
+pub struct DevicePresence {
+    pub enabled: bool,
+    pub shards: u32,
+    pub batch_size: usize,
+    #[serde(with = "humantime_serde")]
+    pub check_interval: Duration,
+    #[serde(with = "humantime_serde")]
+    pub offline_threshold: Duration,
+    #[serde(with = "humantime_serde")]
+    pub grace_period: Duration,
+    #[serde(with = "humantime_serde")]
+    pub state_ttl: Duration,
+}
+
+impl Default for DevicePresence {
+    fn default() -> Self {
+        DevicePresence {
+            enabled: false,
+            shards: 64,
+            batch_size: 512,
+            check_interval: Duration::from_secs(1),
+            offline_threshold: Duration::from_secs(180),
+            grace_period: Duration::from_secs(60),
+            state_ttl: Duration::from_secs(60 * 60 * 24),
         }
     }
 }

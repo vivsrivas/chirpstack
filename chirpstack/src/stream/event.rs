@@ -269,6 +269,46 @@ async fn handle_stream(
                 channel.send(pl).await?;
             }
         }
+        "online" | "offline" => {
+            trace!(key = %k, id=%stream_id, "Event-log received from stream");
+            if let redis::Value::BulkString(b) = v {
+                let v: serde_json::Value = serde_json::from_slice(b)?;
+                let time_seconds = v
+                    .get("time_seconds")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or_default();
+                let time_nanos = v
+                    .get("time_nanos")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or_default() as i32;
+                let state = v
+                    .get("state")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(k)
+                    .to_string();
+                let dev_eui = v
+                    .get("dev_eui")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+
+                let pl = api::LogItem {
+                    id: stream_id.to_string(),
+                    time: Some(prost_types::Timestamp {
+                        seconds: time_seconds,
+                        nanos: time_nanos,
+                    }),
+                    description: k.to_string(),
+                    body: serde_json::to_string(&v)?,
+                    properties: [("State".into(), state), ("DevEUI".into(), dev_eui)]
+                        .iter()
+                        .cloned()
+                        .collect(),
+                };
+
+                channel.send(pl).await?;
+            }
+        }
         _ => {
             error!(key = %k, "Unexpected key in in event-log stream");
         }

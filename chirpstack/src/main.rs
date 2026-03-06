@@ -33,6 +33,7 @@ mod helpers;
 mod integration;
 mod maccommand;
 mod monitoring;
+mod presence;
 mod region;
 mod sensitivity;
 mod storage;

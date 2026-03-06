@@ -27,5 +27,10 @@
 /ui/node_modules
 /ui/build
 
+# Kotlin / Java generated build artifacts
+/api/kotlin/.gradle
+/api/kotlin/build
+/api/kotlin/bin
+
 # Exclude from gitignore
 !/.github

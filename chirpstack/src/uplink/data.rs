@@ -12,6 +12,7 @@ use crate::api::helpers::ToProto;
 use crate::applayer;
 use crate::backend::roaming;
 use crate::helpers::errors::PrintFullError;
+use crate::presence;
 use crate::storage::error::Error as StorageError;
 use crate::storage::{
     application,
@@ -128,6 +129,7 @@ impl Data {
             ctx.filter_rx_info_by_tenant().await?;
         }
         ctx.set_device_info()?;
+        ctx.update_device_presence().await;
         ctx.set_region_config()?;
         ctx.set_device_gateway_rx_info()?;
         ctx.handle_retransmission_reset().await?;
@@ -192,6 +194,7 @@ impl Data {
         ctx.get_device_for_phy_payload_relayed().await?;
         ctx.get_device_data().await?;
         ctx.set_device_info()?;
+        ctx.update_device_presence().await;
         ctx.set_region_config()?;
         ctx.set_relay_rx_info()?;
         ctx.handle_retransmission_reset().await?;
@@ -633,6 +636,13 @@ impl Data {
         Ok(())
     }
 
+    async fn update_device_presence(&self) {
+        let dev = self.device.as_ref().unwrap();
+        if let Err(e) = presence::heartbeat(dev.dev_eui).await {
+            warn!(dev_eui = %dev.dev_eui, error = %e.full(), "Update device presence error");
+        }
+    }
+
     fn set_adr(&mut self) -> Result<()> {
         trace!("Set ADR flag in device-session");
         let ds = self.device.as_mut().unwrap().get_device_session_mut()?;
@@ -642,11 +652,31 @@ impl Data {
         Ok(())
     }
 
+    fn should_update_last_seen_at(last_seen_at: Option<DateTime<Utc>>, now: DateTime<Utc>) -> bool {
+        let interval = config::get().network.device_last_seen_update_interval;
+        if interval.is_zero() {
+            return true;
+        }
+
+        match last_seen_at {
+            None => true,
+            Some(v) => match now.signed_duration_since(v).to_std() {
+                Ok(elapsed) => elapsed >= interval,
+                Err(_) => true,
+            },
+        }
+    }
+
     async fn set_uplink_data_rate(&mut self) -> Result<()> {
         trace!("Set uplink data-rate and reset tx-power on change");
+        let now = Utc::now();
+        let update_last_seen =
+            Self::should_update_last_seen_at(self.device.as_ref().unwrap().last_seen_at, now);
         let device = self.device.as_mut().unwrap();
 
-        self.device_changeset.last_seen_at = Some(Some(Utc::now()));
+        if update_last_seen {
+            self.device_changeset.last_seen_at = Some(Some(now));
+        }
         if device.dr.is_none() || self.uplink_frame_set.dr as i16 != device.dr.unwrap_or_default() {
             self.device_changeset.dr = Some(Some(self.uplink_frame_set.dr.into()));
         }
@@ -666,10 +696,15 @@ impl Data {
 
     async fn set_uplink_data_rate_relayed(&mut self) -> Result<()> {
         trace!("Set relayed uplink data-rate and reset tx-power on change");
+        let now = Utc::now();
+        let update_last_seen =
+            Self::should_update_last_seen_at(self.device.as_ref().unwrap().last_seen_at, now);
         let device = self.device.as_mut().unwrap();
         let relay_ctx = self.relay_context.as_ref().unwrap();
 
-        self.device_changeset.last_seen_at = Some(Some(Utc::now()));
+        if update_last_seen {
+            self.device_changeset.last_seen_at = Some(Some(now));
+        }
         if device.dr.is_none() || self.uplink_frame_set.dr as i16 != device.dr.unwrap_or_default() {
             self.device_changeset.dr = Some(Some(self.uplink_frame_set.dr.into()));
         }

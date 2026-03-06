@@ -19,7 +19,7 @@
   #  * require - Always SSL (skip verification)
   #  * verify-ca - Always SSL (verify that the certificate presented by the server was signed by a trusted CA)
   #  * verify-full - Always SSL (verify that the certification presented by the server was signed by a trusted CA and the server host name matches the one in the certificate)
-  dsn = "postgres://chirpstack:chirpstack@localhost/chirpstack?sslmode=disable"
+  dsn = "postgres://chirpstack:chirpstack@postgres/chirpstack?sslmode=disable"
 
   # Max open connections.
   #
@@ -52,7 +52,7 @@
   # Server address or addresses.
   #
   # Set multiple addresses when connecting to a cluster.
-  servers = ["redis://localhost/"]
+  servers = ["redis://redis/"]
 
   # Redis Cluster.
   #
@@ -89,6 +89,18 @@
     "us915_1",
   ]
 
+  # Minimum interval between last_seen_at updates in the database.
+  device_last_seen_update_interval = "10m"
+
+  [network.device_presence]
+  enabled = true
+  shards = 64
+  batch_size = 512
+  check_interval = "5s"
+  offline_threshold = "2m"
+  grace_period = "0s"
+  state_ttl = "24h"
+
 
 # API interface configuration.
 [api]
@@ -109,5 +121,5 @@
   enabled = ["mqtt"]
 
   [integration.mqtt]
-    server = "tcp://localhost:1883/"
+    server = "tcp://mosquitto:1883/"
     json = true

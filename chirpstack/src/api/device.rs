@@ -9,6 +9,7 @@ use chirpstack_api::tonic::{self, Request, Response, Status};
 use chirpstack_api::{api, common, internal};
 use chrono::{DateTime, Local, Utc};
 use lrwn::{AES128Key, DevAddr, EUI64};
+use tracing::warn;
 use uuid::Uuid;
 
 use super::auth::validator;
@@ -20,7 +21,7 @@ use crate::storage::{
     error::Error as StorageError,
     fields, metrics,
 };
-use crate::{codec, devaddr::get_random_dev_addr};
+use crate::{codec, devaddr::get_random_dev_addr, presence};
 
 pub struct Device {
     validator: validator::RequestValidator,
@@ -103,6 +104,14 @@ impl DeviceService for Device {
             .await?;
 
         let d = device::get(&dev_eui).await.map_err(|e| e.status())?;
+        let redis_last_seen_at = match presence::get_last_seen(dev_eui).await {
+            Ok(v) => v,
+            Err(e) => {
+                warn!(dev_eui = %dev_eui, error = %e, "Redis last_seen lookup failed");
+                None
+            }
+        };
+        let effective_last_seen_at = redis_last_seen_at.or(d.last_seen_at.as_ref().cloned());
 
         let mut resp = Response::new(api::GetDeviceResponse {
             device: Some(api::Device {
@@ -119,8 +128,7 @@ impl DeviceService for Device {
             }),
             created_at: Some(helpers::datetime_to_prost_timestamp(&d.created_at)),
             updated_at: Some(helpers::datetime_to_prost_timestamp(&d.updated_at)),
-            last_seen_at: d
-                .last_seen_at
+            last_seen_at: effective_last_seen_at
                 .as_ref()
                 .map(helpers::datetime_to_prost_timestamp),
             device_status: match d.margin.is_some() {
@@ -293,6 +301,14 @@ impl DeviceService for Device {
         )
         .await
         .map_err(|e| e.status())?;
+        let dev_euis: Vec<EUI64> = items.iter().map(|d| d.dev_eui).collect();
+        let redis_last_seen_at = match presence::get_last_seen_many(&dev_euis).await {
+            Ok(v) => v,
+            Err(e) => {
+                warn!(error = %e, "Redis last_seen bulk lookup failed");
+                std::collections::HashMap::new()
+            }
+        };
 
         let mut resp = Response::new(api::ListDevicesResponse {
             total_count: count as u32,
@@ -302,9 +318,9 @@ impl DeviceService for Device {
                     dev_eui: d.dev_eui.to_string(),
                     created_at: Some(helpers::datetime_to_prost_timestamp(&d.created_at)),
                     updated_at: Some(helpers::datetime_to_prost_timestamp(&d.updated_at)),
-                    last_seen_at: d
-                        .last_seen_at
-                        .as_ref()
+                    last_seen_at: redis_last_seen_at
+                        .get(&d.dev_eui.to_string())
+                        .or(d.last_seen_at.as_ref())
                         .map(helpers::datetime_to_prost_timestamp),
                     name: d.name.clone(),
                     description: d.description.clone(),

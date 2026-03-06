@@ -246,6 +246,14 @@ pub fn run() {
   # unable to respond to the device within its receive-window.
   get_downlink_data_delay="{{ network.get_downlink_data_delay }}"
 
+  # Device last_seen update interval.
+  #
+  # This defines the minimum interval between updates of the device
+  # last_seen_at field in the database.
+  #
+  # Set to 0s to update last_seen_at on every uplink.
+  device_last_seen_update_interval="{{ network.device_last_seen_update_interval }}"
+
   # Mac-commands disabled.
   mac_commands_disabled={{ network.mac_commands_disabled }}
 
@@ -259,6 +267,30 @@ pub fn run() {
     "{{this}}",
     {{/each}}
   ]
+
+  # Device presence tracking.
+  [network.device_presence]
+
+    # Enable Redis based device presence tracking and offline/online events.
+    enabled={{ network.device_presence.enabled }}
+
+    # Number of expiry shards.
+    shards={{ network.device_presence.shards }}
+
+    # Number of due devices claimed per shard iteration.
+    batch_size={{ network.device_presence.batch_size }}
+
+    # Offline detector loop interval.
+    check_interval="{{ network.device_presence.check_interval }}"
+
+    # Device offline threshold.
+    offline_threshold="{{ network.device_presence.offline_threshold }}"
+
+    # Additional grace period for last_seen key expiry.
+    grace_period="{{ network.device_presence.grace_period }}"
+
+    # Presence state TTL.
+    state_ttl="{{ network.device_presence.state_ttl }}"
 
 
   # Scheduler settings.
